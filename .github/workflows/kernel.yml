@@ -50,6 +50,12 @@ jobs:
             > device/UniXNU-liuqin/local.toml
           cat device/UniXNU-liuqin/local.toml
 
+      - name: select defconfig
+        working-directory: UniXNU
+        run: |
+          set -euo pipefail
+          python3.12 ./unixnu defconfig liuqin_ipados18_defconfig -D ../device/UniXNU-liuqin
+
       - name: build kernel
         working-directory: UniXNU
         run: |
