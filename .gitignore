@@ -1,0 +1,17 @@
+# macOS AppleDouble metadata (resource forks) — never committed.
+._*
+.DS_Store
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Upstream Mesa 26.2.6 working tree is not vendored.
+# The local Turnip changes are published as mesa-delta/mesa-26.2.6-liuqin.patch;
+# fetch Mesa 26.2.6 from upstream and apply it to reproduce this tree.
+/metal/mesa/
+
+# Local build products and toolchains
+*.dSYM/
+/build/
+/out/

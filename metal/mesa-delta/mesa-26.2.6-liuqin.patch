@@ -1,0 +1,536 @@
+Binary files a/.DS_Store and b/.DS_Store differ
+Binary files a/src/.DS_Store and b/src/.DS_Store differ
+Binary files a/src/compiler/__pycache__/builtin_types.cpython-311.pyc and b/src/compiler/__pycache__/builtin_types.cpython-311.pyc differ
+Binary files a/src/compiler/isaspec/__pycache__/isa.cpython-311.pyc and b/src/compiler/isaspec/__pycache__/isa.cpython-311.pyc differ
+Binary files a/src/compiler/nir/__pycache__/nir_algebraic.cpython-311.pyc and b/src/compiler/nir/__pycache__/nir_algebraic.cpython-311.pyc differ
+Binary files a/src/compiler/nir/__pycache__/nir_intrinsics.cpython-311.pyc and b/src/compiler/nir/__pycache__/nir_intrinsics.cpython-311.pyc differ
+Binary files a/src/compiler/nir/__pycache__/nir_opcodes.cpython-311.pyc and b/src/compiler/nir/__pycache__/nir_opcodes.cpython-311.pyc differ
+Binary files a/src/freedreno/common/__pycache__/freedreno_dev_info.cpython-311.pyc and b/src/freedreno/common/__pycache__/freedreno_dev_info.cpython-311.pyc differ
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -3507,6 +3507,24 @@
+ {
+    /* We don't do anything with layouts so this should be a no-op */
+    return VK_SUCCESS;
++}
++
++/* A scanout texture with a different row pitch produces thousands of copy
++ * regions. In release builds tu_cs_reserve() only asserts an allocation
++ * failure and the next packet would write past the old command BO. Reserve
++ * a bounded complete R2D step explicitly and propagate the real error to
++ * vkEndCommandBuffer before any packet in that step can be emitted. */
++static bool
++reserve_buffer_copy_step(struct tu_cmd_buffer *cmd)
++{
++   if (vk_command_buffer_has_error(&cmd->vk))
++      return false;
++   VkResult result = tu_cs_reserve_space(&cmd->cs, 512);
++   if (result != VK_SUCCESS) {
++      vk_command_buffer_set_error(&cmd->vk, result);
++      return false;
++   }
++   return true;
+ }
+ 
+ template <chip CHIP>
+@@ -3536,12 +3554,16 @@
+       break;
+    }
+ 
++   if (!reserve_buffer_copy_step(cmd))
++      return;
+    handle_buffer_unaligned_store<CHIP>(cmd, dst_va, size, unaligned_store);
+ 
+    ops->setup(cmd, cs, format, format, VK_IMAGE_ASPECT_COLOR_BIT, 0, false, false,
+               VK_SAMPLE_COUNT_1_BIT, VK_SAMPLE_COUNT_1_BIT);
+ 
+    while (blocks) {
++      if (!reserve_buffer_copy_step(cmd))
++         return;
+       uint32_t src_x = (src_va & 63) / block_size;
+       uint32_t dst_x = (dst_va & 63) / block_size;
+       uint32_t width = MIN2(MIN2(blocks, 0x4000 - src_x), 0x4000 - dst_x);
+@@ -3568,6 +3590,8 @@
+    VK_FROM_HANDLE(tu_buffer, src_buffer, pCopyBufferInfo->srcBuffer);
+    VK_FROM_HANDLE(tu_buffer, dst_buffer, pCopyBufferInfo->dstBuffer);
+ 
++   if (!reserve_buffer_copy_step(cmd))
++      return;
+    trace_start_copy_buffer(&cmd->trace, &cmd->cs, cmd);
+ 
+    /* Choose the largest common block size for all copy regions
+@@ -3599,6 +3623,8 @@
+                         vk_buffer_address(&dst_buffer->vk, region->dstOffset),
+                         vk_buffer_address(&src_buffer->vk, region->srcOffset),
+                         region->size, block_size, &unaligned_store);
++      if (vk_command_buffer_has_error(&cmd->vk))
++         return;
+    }
+ 
+    after_buffer_unaligned_buffer_store<CHIP>(cmd, unaligned_store);
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -30,6 +30,9 @@
+ #include "tu_tracepoints.h"
+ #include "tu_trace_bin_layout.h"
+ 
++#include <stdio.h>
++#include <stdlib.h>
++
+ enum tu_cmd_buffer_status {
+    TU_CMD_BUFFER_STATUS_IDLE = 0,
+    TU_CMD_BUFFER_STATUS_ACTIVE = 1,
+@@ -118,6 +121,66 @@
+    tu_cs_emit(cs, CP_WAIT_REG_MEM_3_REF(seqno));
+    tu_cs_emit(cs, CP_WAIT_REG_MEM_4_MASK(~0u));
+    tu_cs_emit(cs, CP_WAIT_REG_MEM_5_DELAY_LOOP_CYCLES(2));
++}
++
++/* liuqin (rb17): per-operation GPU progress. A draw/dispatch writes its number to global_bo with
++ * CP_EVENT_WRITE7 after its work, and the CP polls that value before the next operation. A hung
++ * operation therefore leaves the CP at a CP_WAIT_REG_MEM whose REF is the operation number. */
++static bool
++tu_liuqin_sync_enabled(void)
++{
++   static int enabled = -1;
++   if (enabled < 0)
++      enabled = getenv("TU_LIUQIN_SYNC") != NULL;
++   return enabled;
++}
++
++static void
++tu_liuqin_sync_tag(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint64_t addr, uint32_t tag)
++{
++   if (!tag || !tu_liuqin_sync_enabled())
++      return;
++
++   tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
++   tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_CLEAN,
++                                    .write_src = EV_WRITE_USER_32B,
++                                    .write_dst = EV_DST_RAM,
++                                    .write_enabled = true).value);
++   tu_cs_emit_qw(cs, addr);
++   tu_cs_emit(cs, tag);
++
++   tu_cs_emit_pkt7(cs, CP_WAIT_REG_MEM, 6);
++   /* GE, not EQ: a draw can be skipped by a conditional stream, in which case its tag is never
++    * written and the next operation writes a larger one. */
++   tu_cs_emit(cs, CP_WAIT_REG_MEM_0_FUNCTION(WRITE_GE) |
++                  CP_WAIT_REG_MEM_0_POLL(POLL_MEMORY));
++   tu_cs_emit_qw(cs, addr);
++   tu_cs_emit(cs, CP_WAIT_REG_MEM_3_REF(tag));
++   tu_cs_emit(cs, CP_WAIT_REG_MEM_4_MASK(~0u));
++   tu_cs_emit(cs, CP_WAIT_REG_MEM_5_DELAY_LOOP_CYCLES(16));
++}
++
++static void
++tu_liuqin_begin_op(struct tu_cmd_buffer *cmd, struct tu_cs *cs, bool dispatch)
++{
++   if (!tu_liuqin_sync_enabled())
++      return;
++
++   uint32_t *count = dispatch ? &cmd->liuqin_dispatch_ops : &cmd->liuqin_draw_ops;
++   uint64_t addr = dispatch ? global_iova(cmd, liuqin_dispatch_tag)
++                            : global_iova(cmd, liuqin_draw_tag);
++
++   tu_liuqin_sync_tag(cmd, cs, addr, *count);
++   ++*count;
++   if (*count <= 200)
++      fprintf(stderr, "LIUQIN %s %u\n", dispatch ? "DISPATCH" : "DRAW", *count);
++}
++
++static void
++tu_liuqin_sync_last(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
++{
++   tu_liuqin_sync_tag(cmd, cs, global_iova(cmd, liuqin_draw_tag), cmd->liuqin_draw_ops);
++   tu_liuqin_sync_tag(cmd, cs, global_iova(cmd, liuqin_dispatch_tag), cmd->liuqin_dispatch_ops);
+ }
+ 
+ template <chip CHIP>
+@@ -385,14 +448,13 @@
+    if (flushes & TU_CMD_FLAG_CACHE_INVALIDATE)
+       tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_INVALIDATE);
+    if (flushes & TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE) {
+-      if (CHIP < A8XX) {
+-         tu_cs_emit_regs(cs, SP_UPDATE_CNTL(CHIP,
+-               .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
+-               .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,
+-         ));
+-      }
+-      tu_cs_emit_regs(cs, A6XX_SP_CS_BINDLESS_INVALIDATE(1));
+-      tu_cs_emit_regs(cs, A6XX_SP_GFX_BINDLESS_INVALIDATE(1));
++      /* liuqin (rb16): 26.2.6's "fix bindless descriptor invalidate sequence" adds SP_CS_BINDLESS_INVALIDATE /
++       * SP_GFX_BINDLESS_INVALIDATE after SP_UPDATE_CNTL. On this A730 the CP stops at the first of those two
++       * writes and the first frame never retires. Use 26.2.0's sequence (SP_UPDATE_CNTL alone). */
++      tu_cs_emit_regs(cs, SP_UPDATE_CNTL(CHIP,
++            .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
++            .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,
++      ));
+    }
+    if (CHIP >= A7XX && flushes & TU_CMD_FLAG_BLIT_CACHE_CLEAN)
+       /* On A7XX, blit cache flushes are required to ensure blit writes are visible
+@@ -467,14 +529,14 @@
+       struct tu_cb_control_point info = {
+          .type = TU_CB_CONTROL_TYPE_PATCHPOINT,
+          .patchpoint = cs->cur,
+-         .patch_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE,
+-         .original_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++         .patch_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR),
++         .original_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                            CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE,
+       };
+       util_dynarray_append(&cmd->cb_control_points, info);
+    }
+ 
+-   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                      CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
+ }
+ 
+@@ -487,13 +549,13 @@
+    struct tu_cb_control_point info = {
+       .type = TU_CB_CONTROL_TYPE_PATCHPOINT,
+       .patchpoint = cs->cur,
+-      .patch_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE,
+-      .original_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++      .patch_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH),
++      .original_value = CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                         CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE,
+    };
+    util_dynarray_append(&cmd->cb_control_points, info);
+ 
+-   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                      CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
+ }
+ 
+@@ -519,7 +581,7 @@
+       struct tu_cs_patchable_state cb_state = tu_cs_patchable_start(cs, 64);
+ 
+       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+ 
+       tu_cs_emit_pkt7(cs, CP_MODIFY_TIMESTAMP, 1);
+       tu_cs_emit(cs, CP_MODIFY_TIMESTAMP_0_ADD(1) |
+@@ -3118,7 +3180,7 @@
+        tu7_cb_disable_reason(!cmd->device->instance->drirc.perf.allow_concurrent_binning, cmd,
+                              "globally disabled")) {
+      tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-     tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++     tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                     CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
+      tu7_set_pred_bit(cs, TU_PREDICATE_CB_ENABLED, false);
+      cmd->state.renderpass_cb_disabled = true;
+@@ -3206,7 +3268,7 @@
+    struct tu_cs_patchable_state no_cb_state = tu_cs_patchable_start(cs, 64);
+    {
+       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                         CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
+       tu7_set_pred_bit(cs, TU_PREDICATE_CB_ENABLED, false);
+       tu_lrz_sysmem_begin<CHIP>(cmd, cs);
+@@ -3474,7 +3536,7 @@
+       tu_cs_emit_pkt7(cs, CP_NOP, else_dwords);
+    } /* else */ {
+       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                      CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
+    }
+ 
+@@ -3611,7 +3673,7 @@
+ 
+          if (use_binning) {
+             tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-            tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BV) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++            tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BV));
+ 
+             tu_lrz_after_bv<CHIP>(cmd, cs);
+ 
+@@ -5323,6 +5385,8 @@
+ {
+    VK_FROM_HANDLE(tu_cmd_buffer, cmd_buffer, commandBuffer);
+ 
++   tu_liuqin_sync_last(cmd_buffer, &cmd_buffer->cs);
++
+    /* We currently flush CCU at the end of the command buffer, like
+     * what the blob does. There's implicit synchronization around every
+     * vkQueueSubmit, but the kernel only flushes the UCHE, and we don't
+@@ -6435,7 +6499,7 @@
+             /* Make BV wait for updates on BR to land */
+             if (cmd->device->physical_device->info->chip >= 7) {
+                tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-               tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE |
++               tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                               CP_THREAD_CONTROL_0_SYNC_THREADS);
+             }
+          }
+@@ -8415,6 +8479,8 @@
+                 /* note: draw_count is 0 for indirect */
+                 uint32_t draw_count)
+ {
++   tu_liuqin_begin_op(cmd, cs, false);
++
+    const struct tu_program_state *program = &cmd->state.program;
+    struct tu_render_pass_state *rp = &cmd->state.rp;
+ 
+@@ -9475,6 +9541,8 @@
+    struct tu_cs *cs = &cmd->cs;
+    struct tu_shader *shader = cmd->state.shaders[MESA_SHADER_COMPUTE];
+ 
++   tu_liuqin_begin_op(cmd, cs, true);
++
+    bool emit_instrlen_workaround =
+       shader->variant->instrlen >
+       cmd->device->physical_device->info->props.instr_cache_size;
+@@ -10217,7 +10285,7 @@
+    if (CHIP >= A7XX) {
+       if (!cmd->state.pass) {
+          tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-         tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++         tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+       }
+       tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(THREAD_MODE) |
+                              CP_COND_REG_EXEC_0_BR);
+@@ -10286,7 +10354,7 @@
+ 
+    if (CHIP >= A7XX && !cmd->state.pass) {
+       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+    }
+ 
+    tu_cs_emit_pkt7(cs, CP_DRAW_PRED_ENABLE_GLOBAL, 1);
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -682,6 +682,10 @@
+ 
+    struct tu_cmd_state state;
+    uint32_t queue_family_index;
++
++   /* liuqin (rb17): draw/dispatch operations recorded so far, used by the per-operation sync diagnostic. */
++   uint32_t liuqin_draw_ops;
++   uint32_t liuqin_dispatch_ops;
+ 
+    /* For TU_DEBUG_START(CHECK_CMD_BUFFER_STATUS) functionality. */
+    struct tu_bo *status_bo;
+--- a/src/freedreno/vulkan/tu_cs.h
++++ b/src/freedreno/vulkan/tu_cs.h
+@@ -571,7 +571,7 @@
+ tu7_thread_control(struct tu_cs *cs, enum cp_thread thread)
+ {
+    tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(thread) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(thread));
+ }
+ 
+ static inline void
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -264,6 +264,12 @@
+    volatile uint32_t userspace_fence;
+    uint32_t _pad5;
+ 
++   /* liuqin (rb17): per-operation progress tags for the draw/dispatch sync diagnostic. The GPU writes
++    * the operation number here with CP_EVENT_WRITE7 after that operation's work, and the CP polls it with
++    * CP_WAIT_REG_MEM before starting the next operation of the same kind. Draws live in draw_cs and
++    * dispatches in cs, so the two kinds keep separate tags and cannot deadlock each other. */
++   volatile uint32_t liuqin_draw_tag;
++   volatile uint32_t liuqin_dispatch_tag;
+ 
+    /* Autotune preemption delay tracking */
+    uint64_t cur_rp_hash;
+--- a/src/freedreno/vulkan/tu_knl_darwin.cc
++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
+@@ -11,6 +11,7 @@
+ #include <pthread.h>
+ #include <string.h>
+ #include <sys/mman.h>
++#include <sys/sysctl.h>
+ #include <unistd.h>
+ 
+ #include <IOKit/IOKitLib.h>
+@@ -80,8 +81,8 @@
+    if (!dw.tunnel)
+       return IOConnectCallStructMethod(dw.conn, method, in, in_size, out_size ? out : NULL,
+                                        out_size ? &out_bytes : NULL);
+-   uint8_t buffer[8 + sizeof(NativeAdrenoAbiSubmit)];
+-   if (in_size > sizeof(NativeAdrenoAbiSubmit))
++   uint8_t buffer[8 + sizeof(NativeAdrenoAbiSubmitBatch)];
++   if (in_size > sizeof(NativeAdrenoAbiSubmitBatch))
+       return kIOReturnBadArgument;
+    const uint32_t header[2] = {DW_TUNNEL_MAGIC, method};
+    memcpy(buffer, header, sizeof(header));
+@@ -179,9 +180,11 @@
+ {
+    for (;;) {
+       uint64_t now = os_time_get_nano();
+-      uint64_t slice = 1000000; /* 1 ms */
+-      if (abs_timeout_ns != UINT64_MAX && abs_timeout_ns <= now)
+-         slice = 0;
++      /* Give the IRQ-backed kernel wait the remaining interval, capped at
++       * 100 ms, rather than issuing one Mach transaction per millisecond. */
++      uint64_t slice = 100000000;
++      if (abs_timeout_ns != UINT64_MAX)
++         slice = abs_timeout_ns > now ? MIN2(abs_timeout_ns - now, slice) : 0;
+       NativeAdrenoAbiWaitFence req = {.fence = fence, .timeout_ns = slice};
+       kern_return_t kr = dw_call(NativeAdrenoMethodWaitFence, &req, sizeof(req), NULL, 0);
+       if (kr == KERN_SUCCESS)
+@@ -635,6 +638,30 @@
+    NativeAdrenoAbiSubmitBuffer *cmds = (NativeAdrenoAbiSubmitBuffer *)
+       util_dynarray_grow(&submit->commands, NativeAdrenoAbiSubmitBuffer, num_entries);
+    for (unsigned i = 0; i < num_entries; i++) {
++      /* liuqin: the kernel's submit-time clean runs on the ioctl's core; a write-combined client mapping is only
++       * flushed by a barrier on the core that wrote it. Flush here, on the submitting thread, before the doorbell. */
++      tu_bo_sync_cache(device, (struct tu_bo *)entries[i].bo, entries[i].offset, entries[i].size,
++                       TU_MEM_SYNC_CACHE_TO_GPU);
++      /* liuqin (rb18): dump the first command streams once, so the packets of the first frame (which
++       * never reaches tu6_draw_common) are readable without a kernel-side parser limit. */
++      {
++         static unsigned liuqin_ib_dumps;
++         if (liuqin_ib_dumps < 8 && entries[i].bo->map) {
++            const uint32_t *w = (const uint32_t *)((const char *)entries[i].bo->map + entries[i].offset);
++            const unsigned n = entries[i].size / 4;
++            fprintf(stderr, "LIUQIN IBDUMP %u iova=0x%llx bytes=%u words=%u\n",
++                    liuqin_ib_dumps,
++                    (unsigned long long)(entries[i].bo->iova + entries[i].offset),
++                    entries[i].size, n);
++            for (unsigned at = 0; at < n; at += 8) {
++               fprintf(stderr, "IB %03u:", at);
++               for (unsigned k = 0; k < 8 && at + k < n; k++)
++                  fprintf(stderr, " %08x", w[at + k]);
++               fprintf(stderr, "\n");
++            }
++            liuqin_ib_dumps++;
++         }
++      }
+       cmds[i] = (NativeAdrenoAbiSubmitBuffer) {
+          .handle = entries[i].bo->darwin_handle,
+          .iova = entries[i].bo->iova + entries[i].offset,
+@@ -828,7 +855,10 @@
+                     unsigned count, uint32_t *fence)
+ {
+    struct tu_device *dev = queue->device;
+-   NativeAdrenoAbiSubmit req = {};
++   NativeAdrenoAbiSubmitBatch req = {};
++   const bool batch = dw.params.flags & NativeAdrenoParamsSubmitBatch;
++   if (count > (batch ? NativeAdrenoAbiMaxBatchBuffers : NativeAdrenoAbiMaxBuffers))
++      return vk_device_set_lost(&dev->vk, "submit: unsupported batch length");
+    req.buffer_count = count;
+    req.queue = 0;
+    for (unsigned i = 0; i < count; i++)
+@@ -836,7 +866,8 @@
+ 
+    for (unsigned attempt = 0; attempt < 64; attempt++) {
+       NativeAdrenoAbiSubmitReply reply = {};
+-      kern_return_t kr = dw_call(NativeAdrenoMethodSubmit, &req, sizeof(req), &reply, sizeof(reply));
++      kern_return_t kr = dw_call(batch ? NativeAdrenoMethodSubmitBatch : NativeAdrenoMethodSubmit, &req,
++                                 batch ? sizeof(req) : sizeof(NativeAdrenoAbiSubmit), &reply, sizeof(reply));
+       if (kr == KERN_SUCCESS) {
+          *fence = (uint32_t)reply.fence;
+          return VK_SUCCESS;
+@@ -877,8 +908,10 @@
+    if (total) {
+       const NativeAdrenoAbiSubmitBuffer *all =
+          util_dynarray_element(&submit->commands, NativeAdrenoAbiSubmitBuffer, 0);
+-      for (unsigned at = 0; at < total; at += NativeAdrenoAbiMaxBuffers) {
+-         unsigned count = MIN2(total - at, (unsigned)NativeAdrenoAbiMaxBuffers);
++      const unsigned batch = (dw.params.flags & NativeAdrenoParamsSubmitBatch) ?
++                             NativeAdrenoAbiMaxBatchBuffers : NativeAdrenoAbiMaxBuffers;
++      for (unsigned at = 0; at < total; at += batch) {
++         unsigned count = MIN2(total - at, batch);
+          uint32_t chunk_fence = 0;
+          VkResult result = darwin_submit_chunk(queue, all + at, count, &chunk_fence);
+          if (result != VK_SUCCESS)
+@@ -1030,10 +1063,36 @@
+    .sparse_vma_finish = darwin_sparse_vma_finish,
+ };
+ 
+-/* liuqin: identify the pristine 26.2.6 build in the boot log. No behavior change. */
+-__attribute__((constructor)) static void liuqin_clean_marker(void)
++/* liuqin: the 26.2.6 bring-up used two debug crutches: nobin (disable the binning pass) and
++ * TU_LIUQIN_SYNC (a CP_WAIT_REG_MEM after every draw/dispatch). Both serialize or disable normal
++ * GPU pipelining and are far too expensive for the UI. Keep them available for hang triage, but
++ * only when the boot line asks for them. The Metal plugin's own sysmem,nocb baseline is left
++ * untouched by default. */
++__attribute__((constructor)) static void liuqin_tu_debug(void)
+ {
+-   fprintf(stderr, "NativeAdreno: Turnip 26.2.6-clean loaded\n");
++   char args[1100] = {};
++   size_t size = sizeof args - 1;
++   bool want_nobin = false, want_sync = false;
++
++   if (sysctlbyname("kern.bootargs", args, &size, nullptr, 0) == 0) {
++      want_nobin = strstr(args, "pong_tu_nobin=1") != nullptr;
++      want_sync = strstr(args, "pong_tu_sync=1") != nullptr;
++   }
++   if (want_nobin) {
++      const char *base = getenv("TU_DEBUG");
++      char value[256] = {};
++      snprintf(value, sizeof value, "%s%s%s",
++               base && base[0] ? base : "sysmem,nocb",
++               base && base[0] ? "," : "", "nobin");
++      setenv("TU_DEBUG", value, 1);
++   }
++   if (want_sync)
++      setenv("TU_LIUQIN_SYNC", "1", 1);
++   else
++      unsetenv("TU_LIUQIN_SYNC");
++   fprintf(stderr, "NativeAdreno: Turnip 26.2.6 TU_DEBUG=%s sync=%s\n",
++           getenv("TU_DEBUG") ? getenv("TU_DEBUG") : "default",
++           getenv("TU_LIUQIN_SYNC") ? getenv("TU_LIUQIN_SYNC") : "0");
+ }
+ 
+ VkResult
+@@ -1100,7 +1159,11 @@
+    device->sync_types[1] = &device->timeline_type.sync;
+    device->sync_types[2] = NULL;
+ 
+-   device->heap.size = tu_get_system_heap_size(device);
++   /* All BOs must fit this connection's scoped GPU IOVA window. System RAM
++    * is shared backing, not extra addressable device-local heap capacity.
++    * Reporting the whole RAM budget made CA's caches exceed the 170 MiB
++    * non-render-server aperture even when physical pages were available. */
++   device->heap.size = MIN2(tu_get_system_heap_size(device), info->va_size);
+    device->heap.used = 0u;
+    device->heap.flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+ 
+--- a/src/freedreno/vulkan/tu_lrz.cc
++++ b/src/freedreno/vulkan/tu_lrz.cc
+@@ -936,14 +936,14 @@
+     */
+    if (CHIP >= A7XX) {
+       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+ 
+       tu_cs_emit_pkt7(cs, CP_MODIFY_TIMESTAMP, 1);
+       tu_cs_emit(cs, CP_MODIFY_TIMESTAMP_0_ADD(1) |
+                      CP_MODIFY_TIMESTAMP_0_OP(MODIFY_TIMESTAMP_ADD_LOCAL));
+ 
+       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BV) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BV));
+ 
+       tu7_wait_onchip_val(cs, TU_ONCHIP_CB_RESLIST_OVERFLOW, 0);
+ 
+--- a/src/freedreno/vulkan/tu_query_pool.cc
++++ b/src/freedreno/vulkan/tu_query_pool.cc
+@@ -1159,7 +1159,7 @@
+           */
+          if (!cmdbuf->state.pass) {
+             tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+-            tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH) | CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
++            tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+          }
+          tu7_set_pred_mask(cs, (1u << TU_PREDICATE_VTX_STATS_RUNNING) |
+                                (1u << TU_PREDICATE_VTX_STATS_NOT_RUNNING),
+Binary files a/src/util/__pycache__/drirc_gen.cpython-311.pyc and b/src/util/__pycache__/drirc_gen.cpython-311.pyc differ
+Binary files a/src/util/format/__pycache__/u_format_pack.cpython-311.pyc and b/src/util/format/__pycache__/u_format_pack.cpython-311.pyc differ
+Binary files a/src/util/format/__pycache__/u_format_parse.cpython-311.pyc and b/src/util/format/__pycache__/u_format_parse.cpython-311.pyc differ
+Binary files a/src/util/perf/__pycache__/u_trace.cpython-311.pyc and b/src/util/perf/__pycache__/u_trace.cpython-311.pyc differ
+Binary files a/src/vulkan/util/__pycache__/vk_entrypoints.cpython-311.pyc and b/src/vulkan/util/__pycache__/vk_entrypoints.cpython-311.pyc differ
+Binary files a/src/vulkan/util/__pycache__/vk_extensions.cpython-311.pyc and b/src/vulkan/util/__pycache__/vk_extensions.cpython-311.pyc differ
+Binary files a/src/vulkan/util/__pycache__/vk_physical_device_features_gen.cpython-311.pyc and b/src/vulkan/util/__pycache__/vk_physical_device_features_gen.cpython-311.pyc differ
