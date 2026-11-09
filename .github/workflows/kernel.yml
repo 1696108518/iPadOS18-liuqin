@@ -1,0 +1,87 @@
+name: kernel
+
+# Build kernel.macho against OUR volume layout (the one the root image was
+# generated with), so the UUIDs baked into the kernel match the image on the
+# tablet. Everything else (root image, shim container) is already on the device.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: macos-15-intel
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+
+      - name: flatten the device tree to the repo root
+        run: |
+          set -euo pipefail
+          shopt -s dotglob
+          mv device/UniXNU-liuqin/* device/
+          ls device | head -30
+
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: UniXNU
+
+      - name: tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          set -euo pipefail
+          brew install dtc lzfse p7zip python@3.12 || true
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: install the OS profile
+        run: |
+          set -euo pipefail
+          mkdir -p UniXNU/profiles/os
+          cp -R device/os-profiles/ipados-18.7.10-22H374 UniXNU/profiles/os/
+          ls UniXNU/profiles/os
+
+      - name: local build inputs
+        run: |
+          set -euo pipefail
+          WS="${{ github.workspace }}"
+          cat > device/local.toml <<EOF
+          [pong_build]
+          tree = "${WS}/tree"
+          developer_dir = "/Applications/Xcode.app/Contents/Developer"
+          volume_layout = "${WS}/volume-layout.json"
+          sheng_source = "${WS}/device/UniXNU-sheng/package"
+          EOF
+          cat device/local.toml
+
+      - name: build kernel
+        working-directory: UniXNU
+        env:
+          PYTHON: python3.12
+        run: |
+          set -euo pipefail
+          python3.12 ./unixnu build kernel -D ../device -j 3 --os ipados-18.7.10-22H374 2>&1 | tee ../kernel-build.log
+
+      - name: collect
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find . -name kernel.macho -o -name '*.adt' -o -name 'PONG_BUILD_RESULT.json' | head -20
+          find . -name kernel.macho -exec cp {} out/ \;
+          find . -name '*.adt' -exec cp {} out/ \;
+          cp kernel-build.log out/ || true
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-out
+          path: out
+          retention-days: 3
