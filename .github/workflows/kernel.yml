@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   kernel:
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
@@ -41,13 +41,13 @@ jobs:
         run: |
           set -euo pipefail
           WS="${{ github.workspace }}"
-          cat > device/UniXNU-liuqin/local.toml <<EOF
-          [pong_build]
-          tree = "${WS}/tree"
-          developer_dir = "/Applications/Xcode.app/Contents/Developer"
-          volume_layout = "${WS}/volume-layout.json"
-          sheng_source = "${WS}/device/UniXNU-sheng/package"
-          EOF
+          printf '%s\n' \
+            '[pong_build]' \
+            "tree = \"${WS}/tree\"" \
+            'developer_dir = "/Applications/Xcode.app/Contents/Developer"' \
+            "volume_layout = \"${WS}/volume-layout.json\"" \
+            "sheng_source = \"${WS}/device/UniXNU-sheng/package\"" \
+            > device/UniXNU-liuqin/local.toml
           cat device/UniXNU-liuqin/local.toml
 
       - name: build kernel
