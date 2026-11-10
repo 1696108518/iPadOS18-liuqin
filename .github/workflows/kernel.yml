@@ -34,20 +34,6 @@ jobs:
           ref: liuqin
           path: UniXNU
 
-      - name: reclaim disk
-        run: |
-          set -euo pipefail
-          echo "--- before ---"
-          df -h /
-          du -sh /Applications/Xcode*.app 2>/dev/null || true
-          # Fast wins only: simulator caches and device images. Deleting whole
-          # Xcode copies takes tens of minutes on APFS, so it is left out.
-          sudo rm -rf /Library/Developer/CoreSimulator/Caches /Library/Developer/CoreSimulator/Devices || true
-          rm -rf "$HOME/Library/Developer/CoreSimulator" "$HOME/Library/Developer/Xcode/DerivedData" || true
-          sudo rm -rf /Users/runner/Library/Caches/Homebrew/downloads/*.incomplete 2>/dev/null || true
-          echo "--- after ---"
-          df -h /
-
       - name: tools
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
