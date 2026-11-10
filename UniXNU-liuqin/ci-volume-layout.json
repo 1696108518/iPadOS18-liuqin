@@ -1,0 +1,14 @@
+{
+  "ci_placeholder": false,
+  "build": "22H374",
+  "lba_bytes": 4096,
+  "os": {
+    "uuid": "B07DF049-7AD9-47B5-9F8F-9EE728056398"
+  },
+  "systemos": {
+    "uuid": "78E988F2-C70E-4204-ACB7-20170E0D881C"
+  },
+  "data": {
+    "uuid": "24490605-3A95-420C-B5BD-11334598DF09"
+  }
+}
