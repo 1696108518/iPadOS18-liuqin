@@ -13,7 +13,7 @@ env:
 
 jobs:
   kernel:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +42,8 @@ jobs:
           set -euo pipefail
           brew install dtc lzfse || true
           python3 -V
+          python3 -c 'import tomllib; print("tomllib ok")'
+          uname -m
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
@@ -70,13 +72,13 @@ jobs:
         working-directory: UniXNU
         run: |
           set -euo pipefail
-          python3.12 ./unixnu defconfig liuqin_ipados18_defconfig -D ../device
+          python3 ./unixnu defconfig liuqin_ipados18_defconfig -D ../device
 
       - name: fetch IPSW kernelcache
         working-directory: UniXNU
         run: |
           set -euo pipefail
-          python3.12 ./unixnu ipsw fetch KernelCache -D ../device
+          python3 ./unixnu ipsw fetch KernelCache -D ../device
 
       - name: build kernel
         working-directory: UniXNU
@@ -87,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           chip="$(printf '%s' "${CHIP_ID}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
-          if ! python3.12 ./unixnu build kernel -D ../device --local ../device -j 3 \
+          if ! python3 ./unixnu build kernel -D ../device --local ../device -j 3 \
                  --os ipados-18.7.10-22H374 --skip-prelink --unique-chip-id "${chip}" 2>&1 | tee ../kernel-build.log; then
             echo "=== BUILD FAILED; dumping component logs ===" >> ../kernel-build.log
             for f in $(find ../UniXNU/out -name '*.log' 2>/dev/null | head -20) ../build-*.log; do
@@ -109,12 +111,6 @@ jobs:
           find . -name 'pong-boot-manifest.json' -exec cp {} out/ \;
           cp kernel-build.log out/ 2>/dev/null || true
           cp install.log out/ 2>/dev/null || true
-          echo "=== PongPlatform24 in catalog ===" >> out/diag.txt
-          grep -c PongPlatform24 UniXNU/components.toml >> out/diag.txt 2>&1 || echo 0 >> out/diag.txt
-          echo "=== device dirs ===" >> out/diag.txt
-          ls device/migration/format2/ >> out/diag.txt 2>&1
-          ls device/kits/ >> out/diag.txt 2>&1
-          cp out/diag.txt out/diag.txt 2>/dev/null || true
           ls -lR out | head -40
 
       - name: publish logs to ci-diag
@@ -124,11 +120,9 @@ jobs:
           cd device
           cp ../kernel-build.log . 2>/dev/null || true
           cp ../install.log . 2>/dev/null || true
-          echo "=== catalog grep ===" > grep.txt
-          grep -n PongPlatform24 ../UniXNU/components.toml >> grep.txt 2>&1 || echo "NONE" >> grep.txt
           git config user.email 'ci@example.com'
           git config user.name 'ci'
-          git add kernel-build.log install.log grep.txt
+          git add kernel-build.log install.log
           git commit -m 'ci build log' || true
           git push origin HEAD:ci-diag --force || true
           echo done
