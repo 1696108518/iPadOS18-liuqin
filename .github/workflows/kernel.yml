@@ -72,6 +72,12 @@ jobs:
           set -euo pipefail
           python3.12 ./unixnu defconfig liuqin_ipados18_defconfig -D ../device
 
+      - name: fetch IPSW kernelcache
+        working-directory: UniXNU
+        run: |
+          set -euo pipefail
+          python3.12 ./unixnu ipsw fetch KernelCache -D ../device
+
       - name: build kernel
         working-directory: UniXNU
         env:
