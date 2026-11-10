@@ -39,15 +39,12 @@ jobs:
           set -euo pipefail
           echo "--- before ---"
           df -h /
-          for app in /Applications/Xcode*.app; do
-            [ -d "$app" ] || continue
-            case "$(basename "$app")" in
-              Xcode_16.4.app) echo "keep $app" ;;
-              *) echo "remove $app"; sudo rm -rf "$app" || true ;;
-            esac
-          done
+          du -sh /Applications/Xcode*.app 2>/dev/null || true
+          # Fast wins only: simulator caches and device images. Deleting whole
+          # Xcode copies takes tens of minutes on APFS, so it is left out.
           sudo rm -rf /Library/Developer/CoreSimulator/Caches /Library/Developer/CoreSimulator/Devices || true
           rm -rf "$HOME/Library/Developer/CoreSimulator" "$HOME/Library/Developer/Xcode/DerivedData" || true
+          sudo rm -rf /Users/runner/Library/Caches/Homebrew/downloads/*.incomplete 2>/dev/null || true
           echo "--- after ---"
           df -h /
 
