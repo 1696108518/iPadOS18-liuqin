@@ -49,6 +49,12 @@ jobs:
           df -h /
           echo "PONG_MIG=$(xcrun -f mig)" >> "$GITHUB_ENV"
           echo "PONG_MIGCOM=$(xcrun -f migcom || true)" >> "$GITHUB_ENV"
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          VER="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "PONG_IOS_SDK=$SDK" >> "$GITHUB_ENV"
+          echo "XNU_SDKROOT=$SDK" >> "$GITHUB_ENV"
+          echo "XNU_SDKVERSION=$VER" >> "$GITHUB_ENV"
+          echo "ios sdk $VER at $SDK"
           echo "mig=$(xcrun -f mig)"
 
       - name: install OS profile and component recipe
