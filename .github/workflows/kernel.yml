@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   UNIXNU_SHARED_XNU_BUILD: "0"
@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: device
+          token: ${{ github.token }}
 
       - name: flatten device tree to device root
         run: |
@@ -99,6 +100,22 @@ jobs:
           ls device/kits/ >> out/diag.txt 2>&1
           cp out/diag.txt out/diag.txt 2>/dev/null || true
           ls -lR out | head -40
+
+      - name: publish logs to ci-diag
+        if: always()
+        run: |
+          set -euo pipefail
+          cd device
+          cp ../kernel-build.log . 2>/dev/null || true
+          cp ../install.log . 2>/dev/null || true
+          echo "=== catalog grep ===" > grep.txt
+          grep -n PongPlatform24 ../UniXNU/components.toml >> grep.txt 2>&1 || echo "NONE" >> grep.txt
+          git config user.email 'ci@example.com'
+          git config user.name 'ci'
+          git add kernel-build.log install.log grep.txt
+          git commit -m 'ci build log' || true
+          git push origin HEAD:ci-diag --force || true
+          echo done
 
       - uses: actions/upload-artifact@v4
         if: always()
