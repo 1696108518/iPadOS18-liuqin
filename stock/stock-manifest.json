@@ -1,0 +1,9 @@
+{
+  "build": "V14.0.9.0.TMYCNXM",
+  "files": {
+    "liuqin-cape.dtb": {
+      "bytes": 480704,
+      "sha256": "ce90f88b645ffdcc844ede7b0c57162c082079c4ee162f6b6e262389066b2d31"
+    }
+  }
+}
