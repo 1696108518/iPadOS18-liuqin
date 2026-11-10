@@ -1,0 +1,9 @@
+{
+  "profile": "ipados-18.7.10-22H374",
+  "installed_at": "/Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/profiles/os/ipados-18.7.10-22H374",
+  "components_added": [],
+  "components_present": [
+    "PongPlatform24"
+  ]
+}
+UniXNU/scripts/unixnu/kernel.py: shared BCM2837 passes skippable (UNIXNU_SHARED_XNU_BUILD=0)

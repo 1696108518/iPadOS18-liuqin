@@ -1,0 +1,55 @@
+== submodules /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU
+== fetch https://github.com/apple-oss-distributions/xnu.git 43a90889846e
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/xnu-198600e5 fetch -q --depth 1 origin 43a90889846e00bfb5cf1d255cdc0a701a1e05a4
+== fetch https://github.com/apple-oss-distributions/libplatform.git 8b02fc711d41
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/libplatform-ffb49fde fetch -q --depth 1 origin 8b02fc711d41a40477bfe857dd39755f250d1d7e
+== fetch https://github.com/apple-oss-distributions/libdispatch.git 934ff27e48ab
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/libdispatch-662dcba6 fetch -q --depth 1 origin 934ff27e48ab7a6ee799442c5f19ebbb990567e8
+== fetch https://github.com/apple-oss-distributions/AvailabilityVersions.git 2f2dc3dd7fad
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/AvailabilityVersions-695e996f fetch -q --depth 1 origin 2f2dc3dd7fadd28f600d7ef517737ea99be4b94f
+== fetch https://github.com/apple-oss-distributions/libpthread.git c0e60fb5ecfc
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/libpthread-9e5201bd fetch -q --depth 1 origin c0e60fb5ecfc54cf379c261d3f9572cc22ded891
+== fetch https://github.com/ONLYA/corecrypto-2023.git 11fba65b12d8
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/corecrypto-2023-c0651bae fetch -q --depth 1 origin 11fba65b12d8830630e248dfa8344caf8b065f26
+== fetch https://github.com/apple-oss-distributions/IOStorageFamily.git 1b96f8f04b9d
++ git -C /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/IOStorageFamily-f67d14d8 fetch -q --depth 1 origin 1b96f8f04b9dff4dc0277ac43625bf694e62c5aa
+== tree /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/liuqin/ipados-18.7.10-22H374/liuqin_ipados18/tree
+== kernel: XNU
+== kernel: prepare XNU 43a90889846e
++ git clone --quiet --shared --no-checkout /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/feeds/xnu-198600e5 /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/liuqin/ipados-18.7.10-22H374/liuqin_ipados18/tree/.cache/xnu-work
+== kernel: patch 0001-pong-darwin24.patch
+== kernel: patch zz-pong-main-native4k-cache-io.patch
+== kernel: patch zzzz-pong-scanout-idle.patch
+== kernel: patch zzzzz-pong-wake-scanout-alpha.patch
+== kernel: patch zzzzzz-pong-runtime-rule-capacity.patch
+== kernel: patch zzzzzzz-pong-frame-links.patch
+== kernel: patch zzzzzzzz-pong-native-pac-keys.patch
+== kernel: patch zzzzzzzzz-liuqin-weak-optional-hooks.patch
+== kernel: patch zzzzzzzzzz-pong-source-storage.patch
+== kernel: patch zzzzzzzzzzz-pong-clang15-gss-vla.patch
+== kernel: patch zzzzzzzzzzzz-pong-clang15-assert-static-if.patch
+== kernel: patch zzzzzzzzzzzzzz-pong-clang15-driverkit-i-orpc.patch
+== kernel: patch zzzzzzzzzzzzzzzz-pong-clang15-empty-init.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzz-pong-fbcon-serial.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzz-pong-mig-reply-size.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzz-pong-iig-kernel-content.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzz-pong-apfs-init-state.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzz-pong-miniamfi-trustcache.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzz-pong-fcntl-data-diag.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzz-pong-cs-stage.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzz-pong-cs-badhash.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-cs-native4k-zero.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-cs-actdata.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-cs-zerotail.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-cs-suffix.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-ufs-diag.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-ufs-pub.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-ufs-datapanic.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-fbcon-overlay.patch
+== kernel: patch zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-pong-console-loghook.patch
++ python3 /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/liuqin/ipados-18.7.10-22H374/liuqin_ipados18/tree/scripts/prepare-xnu-source.py
+Restored 5 omitted public headers from Apple; blob hashes verified
+== kernel: shared BCM2837 passes skipped; the component recipes build the kernel
+== kernel: component-PongPlatform24
++ python3 /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/device/kits/PongPlatform24/build-with-runtime.py --artifact-dir /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/liuqin/ipados-18.7.10-22H374/liuqin_ipados18/kernel --tree /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/liuqin/ipados-18.7.10-22H374/liuqin_ipados18/tree
+== kernel: native only /Users/runner/work/iPadOS18-liuqin/iPadOS18-liuqin/UniXNU/out/liuqin/ipados-18.7.10-22H374/liuqin_ipados18/kernel/kernel.macho sha256 ed7a341675d4482859533878a775e804365dbb2f528044502f0e62abfb75c05c
