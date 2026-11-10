@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           cp -Rf device/UniXNU-liuqin/. device/
           rm -rf device/UniXNU-liuqin
-          ls device | head -30
+          ls device | head -40
 
       - uses: actions/checkout@v4
         with:
@@ -40,14 +40,15 @@ jobs:
         run: |
           set -euo pipefail
           brew install dtc lzfse || true
+          python3 -V
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: install OS profile and component recipe
         run: |
           set -euo pipefail
-          python3 device/scripts/install-unixnu-inputs.py --unixnu UniXNU
-          python3 device/scripts/patch-unixnu-kernel-step.py --unixnu UniXNU
+          python3 device/scripts/install-unixnu-inputs.py --unixnu UniXNU 2>&1 | tee install.log
+          python3 device/scripts/patch-unixnu-kernel-step.py --unixnu UniXNU 2>&1 | tee -a install.log
 
       - name: local build inputs
         run: |
@@ -77,8 +78,8 @@ jobs:
         run: |
           set -euo pipefail
           chip="$(printf '%s' "${CHIP_ID}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
-          python3.12 ./unixnu build kernel -D ../device -j 3 --os ipados-18.7.10-22H374 \
-            --skip-prelink --unique-chip-id "${chip}" 2>&1 | tee ../kernel-build.log
+          python3.12 ./unixnu build kernel -D ../device --local ../device -j 3 \
+            --os ipados-18.7.10-22H374 --skip-prelink --unique-chip-id "${chip}" 2>&1 | tee ../kernel-build.log
 
       - name: collect
         if: always()
@@ -89,7 +90,14 @@ jobs:
           find . -name '*.adt' -exec cp {} out/ \;
           find . -name 'PONG_BUILD_RESULT.json' -exec cp {} out/ \;
           find . -name 'pong-boot-manifest.json' -exec cp {} out/ \;
-          cp kernel-build.log out/ || true
+          cp kernel-build.log out/ 2>/dev/null || true
+          cp install.log out/ 2>/dev/null || true
+          echo "=== PongPlatform24 in catalog ===" >> out/diag.txt
+          grep -c PongPlatform24 UniXNU/components.toml >> out/diag.txt 2>&1 || echo 0 >> out/diag.txt
+          echo "=== device dirs ===" >> out/diag.txt
+          ls device/migration/format2/ >> out/diag.txt 2>&1
+          ls device/kits/ >> out/diag.txt 2>&1
+          cp out/diag.txt out/diag.txt 2>/dev/null || true
           ls -lR out | head -40
 
       - uses: actions/upload-artifact@v4
