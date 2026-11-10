@@ -60,6 +60,10 @@ jobs:
           uname -m
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          df -h /
+          echo "PONG_MIG=$(xcrun -f mig)" >> "$GITHUB_ENV"
+          echo "PONG_MIGCOM=$(xcrun -f migcom || true)" >> "$GITHUB_ENV"
+          echo "mig=$(xcrun -f mig)"
 
       - name: install OS profile and component recipe
         run: |
@@ -104,13 +108,17 @@ jobs:
         run: |
           set -euo pipefail
           chip="$(printf '%s' "${CHIP_ID}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
-          if ! python3 ./unixnu build kernel -D ../device --local ../device -j 3 \
+          if ! python3 ./unixnu build kernel -D ../device --local ../device -j 2 \
                  --os ipados-18.7.10-22H374 --skip-prelink --unique-chip-id "${chip}" 2>&1 | tee ../kernel-build.log; then
+            echo "=== BUILD FAILED; environment ===" >> ../kernel-build.log
+            { df -h /; vm_stat | head -6; sysctl -n hw.memsize hw.ncpu; } >> ../kernel-build.log 2>&1
             echo "=== BUILD FAILED; dumping component logs ===" >> ../kernel-build.log
             for f in $(find ../UniXNU/out -name '*.log' 2>/dev/null | head -20) ../build-*.log; do
               [ -f "$f" ] || continue
               echo "=== $f ===" >> ../kernel-build.log
-              tail -250 "$f" >> ../kernel-build.log 2>&1
+              tail -150 "$f" >> ../kernel-build.log 2>&1
+              echo "=== $f : lines without INSTALLHDR (tail 120) ===" >> ../kernel-build.log
+              grep -v 'INSTALLHDR' "$f" 2>/dev/null | tail -120 >> ../kernel-build.log 2>&1 || true
             done
             exit 1
           fi
