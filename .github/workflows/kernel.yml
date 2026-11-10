@@ -86,6 +86,7 @@ jobs:
           CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
           GITHUB_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ github.token }}
+          PONG_ADRENO_FIRMWARE: ${{ github.workspace }}/device/firmware/adreno730
         run: |
           set -euo pipefail
           chip="$(printf '%s' "${CHIP_ID}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
