@@ -29,8 +29,8 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: UniXNU/UniXNU
-          ref: ${{ env.UNIXNU_REF }}
+          repository: 1696108518/UniXNU
+          ref: liuqin
           path: UniXNU
 
       - name: tools
