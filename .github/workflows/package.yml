@@ -611,7 +611,7 @@ jobs:
           PONG_ADRENO_FIRMWARE: ${{ github.workspace }}/device/firmware/adreno730
         run: |
           set -euo pipefail
-          args=(--os "${OS_PROFILE}" --uefi ../uefi-liuqin -j 3 --unique-chip-id "${UNIXNU_UNIQUE_CHIP_ID}")
+          args=(--os "${OS_PROFILE}" --uefi "${UNIXNU_UEFI}" -j 3 --unique-chip-id "${UNIXNU_UNIQUE_CHIP_ID}")
           # Without an original kernelcache the kernel step stages the native
           # build as kernel.macho, which is the bootable one. With prelink it
           # prelinks the extracted 22H374 kernelcache instead.
