@@ -6,6 +6,11 @@ on:
 permissions:
   contents: read
 
+env:
+  UNIXNU_SHARED_XNU_BUILD: "0"
+  OS_PROFILE: ipados-18.7.10-22H374
+  UNIXNU_REF: c96b29975645b711dc06bc435c3ad27321ce817c
+
 jobs:
   kernel:
     runs-on: macos-15
@@ -15,9 +20,17 @@ jobs:
         with:
           path: device
 
+      - name: flatten device tree to device root
+        run: |
+          set -euo pipefail
+          cp -Rf device/UniXNU-liuqin/. device/
+          rm -rf device/UniXNU-liuqin
+          ls device | head -30
+
       - uses: actions/checkout@v4
         with:
           repository: UniXNU/UniXNU
+          ref: ${{ env.UNIXNU_REF }}
           path: UniXNU
 
       - name: tools
@@ -26,16 +39,15 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           set -euo pipefail
-          brew install dtc lzfse p7zip python@3.12 || true
+          brew install dtc lzfse || true
           xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
 
-      - name: install the OS profile
+      - name: install OS profile and component recipe
         run: |
           set -euo pipefail
-          mkdir -p UniXNU/profiles/os
-          cp -R device/UniXNU-liuqin/os-profiles/ipados-18.7.10-22H374 UniXNU/profiles/os/
-          ls UniXNU/profiles/os
+          python3 device/scripts/install-unixnu-inputs.py --unixnu UniXNU
+          python3 device/scripts/patch-unixnu-kernel-step.py --unixnu UniXNU
 
       - name: local build inputs
         run: |
@@ -45,22 +57,28 @@ jobs:
             '[pong_build]' \
             "tree = \"${WS}/tree\"" \
             'developer_dir = "/Applications/Xcode.app/Contents/Developer"' \
-            "volume_layout = \"${WS}/volume-layout.json\"" \
+            "volume_layout = \"${WS}/device/volume-layout.json\"" \
             "sheng_source = \"${WS}/device/UniXNU-sheng/package\"" \
-            > device/UniXNU-liuqin/local.toml
-          cat device/UniXNU-liuqin/local.toml
+            > device/local.toml
+          cat device/local.toml
+          echo "PONG_VOLUME_LAYOUT=${WS}/device/volume-layout.json" >> "$GITHUB_ENV"
+          echo "UNIXNU_DEVICE=${WS}/device" >> "$GITHUB_ENV"
 
       - name: select defconfig
         working-directory: UniXNU
         run: |
           set -euo pipefail
-          python3.12 ./unixnu defconfig liuqin_ipados18_defconfig -D ../device/UniXNU-liuqin
+          python3.12 ./unixnu defconfig liuqin_ipados18_defconfig -D ../device
 
       - name: build kernel
         working-directory: UniXNU
+        env:
+          CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
         run: |
           set -euo pipefail
-          python3.12 ./unixnu build kernel -D ../device/UniXNU-liuqin -j 3 --os ipados-18.7.10-22H374 2>&1 | tee ../kernel-build.log
+          chip="$(printf '%s' "${CHIP_ID}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+          python3.12 ./unixnu build kernel -D ../device -j 3 --os ipados-18.7.10-22H374 \
+            --skip-prelink --unique-chip-id "${chip}" 2>&1 | tee ../kernel-build.log
 
       - name: collect
         if: always()
@@ -70,8 +88,9 @@ jobs:
           find . -name kernel.macho -exec cp {} out/ \;
           find . -name '*.adt' -exec cp {} out/ \;
           find . -name 'PONG_BUILD_RESULT.json' -exec cp {} out/ \;
+          find . -name 'pong-boot-manifest.json' -exec cp {} out/ \;
           cp kernel-build.log out/ || true
-          ls -l out
+          ls -lR out | head -40
 
       - uses: actions/upload-artifact@v4
         if: always()
