@@ -1,0 +1,62 @@
+name: diag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UNIXNU_REF: c96b29975645b711dc06bc435c3ad27321ce817c
+
+jobs:
+  diag:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+          token: ${{ github.token }}
+
+      - name: flatten
+        run: |
+          set -euo pipefail
+          cp -Rf device/UniXNU-liuqin/. device/
+          rm -rf device/UniXNU-liuqin
+
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ env.UNIXNU_REF }}
+          path: UniXNU
+
+      - name: diagnose
+        run: |
+          {
+            echo "=== python3 ==="; python3 -V; command -v python3
+            echo "=== python3.12 ==="; python3.12 -V 2>&1
+            echo "=== flatten: migration ==="; ls -la device/migration/format2/ 2>&1
+            echo "=== flatten: scripts ==="; ls device/scripts/ 2>&1 | head
+            echo "=== run install-unixnu-inputs.py ==="
+            python3 device/scripts/install-unixnu-inputs.py --unixnu UniXNU 2>&1
+            echo "exit=$?"
+            echo "=== catalog has PongPlatform24? ==="
+            grep -n 'PongPlatform24' UniXNU/components.toml 2>&1 || echo "NOT FOUND"
+            echo "=== parse wanted (tomllib) ==="
+            python3 -c "import tomllib; c=tomllib.load(open('device/migration/format2/components.toml','rb'))['component']; print(type(c).__name__); print([e['id'] for e in c] if isinstance(c,list) else c)" 2>&1
+            echo "=== board.toml [board].os_profile and [components] ==="
+            python3 -c "import tomllib; b=tomllib.load(open('device/board.toml','rb')); print('os_profile', b['board'].get('os_profile')); print('components', b.get('components'))" 2>&1
+          } > diag.txt 2>&1
+
+      - name: commit diag
+        if: always()
+        run: |
+          set -euo pipefail
+          cd device
+          cp ../diag.txt diag.txt
+          git config user.email 'ci@example.com'
+          git config user.name 'ci'
+          git add diag.txt
+          git commit -m 'diag' || true
+          git push origin HEAD:ci-diag --force || true
+          echo "pushed"
