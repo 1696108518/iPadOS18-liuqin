@@ -1,8 +1,9 @@
 {
   "format": "pong-sm8475-dram-v1",
   "board": "liuqin",
-  "physical_bytes": 8389656576,
-  "source": "DRAM: stock ABL /memory of the 8 GB unit (iPadOS-liuqin NOTES 6.2); reserved: union of mainline liuqin fe81794b, stock uefiplat.cfg V14.0.9.0.TMYCNXM and the pong SM8475 capture",
+  "memory_variant": "12 GB",
+  "physical_bytes": 12644777984,
+  "source": "DRAM: this tablet's /sys/firmware/fdt /memory (12 GB unit, six banks); reserved: union of mainline liuqin fe81794b, stock uefiplat.cfg V14.0.9.0.TMYCNXM and the pong SM8475 capture",
   "dram": [
     {
       "base": "0x80000000",
@@ -14,15 +15,19 @@
     },
     {
       "base": "0x800000000",
-      "size": "0x39700000"
+      "size": "0x37100000"
     },
     {
-      "base": "0x839d00000",
+      "base": "0x837700000",
       "size": "0x1e00000"
     },
     {
       "base": "0x840000000",
-      "size": "0x140000000"
+      "size": "0xc0000000"
+    },
+    {
+      "base": "0x900000000",
+      "size": "0x180000000"
     }
   ],
   "reserved": [
@@ -569,7 +574,11 @@
     },
     {
       "base": "0x840000000",
-      "size": "0x140000000"
+      "size": "0xc0000000"
+    },
+    {
+      "base": "0x900000000",
+      "size": "0x180000000"
     }
   ],
   "policy": "Intersect with current UEFI EfiConventionalMemory and claim each range; exclude firmware GOP at runtime; never reclaim BootServices/RuntimeServices or reserved descriptors"
