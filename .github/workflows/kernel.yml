@@ -90,9 +90,10 @@ jobs:
           if ! python3.12 ./unixnu build kernel -D ../device --local ../device -j 3 \
                  --os ipados-18.7.10-22H374 --skip-prelink --unique-chip-id "${chip}" 2>&1 | tee ../kernel-build.log; then
             echo "=== BUILD FAILED; dumping component logs ===" >> ../kernel-build.log
-            for f in $(find ../UniXNU/out -name '*.log' 2>/dev/null | head -20); do
+            for f in $(find ../UniXNU/out -name '*.log' 2>/dev/null | head -20) ../build-*.log; do
+              [ -f "$f" ] || continue
               echo "=== $f ===" >> ../kernel-build.log
-              tail -150 "$f" >> ../kernel-build.log 2>&1
+              tail -250 "$f" >> ../kernel-build.log 2>&1
             done
             exit 1
           fi
